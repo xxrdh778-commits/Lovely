@@ -1,2 +1,0 @@
-com.lovely.assistant
-style Theme_Lovely
