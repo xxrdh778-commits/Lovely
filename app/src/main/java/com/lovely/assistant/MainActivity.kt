@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.content.Context
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -11,6 +12,14 @@ import android.speech.tts.TextToSpeech
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -24,6 +33,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -36,6 +46,7 @@ class MainActivity : ComponentActivity() {
 
     private var speechRecognizer: SpeechRecognizer? = null
     private var textToSpeech: TextToSpeech? = null
+    private var ttsReady = false
 
     private var transcriptionState by mutableStateOf("Waiting for your voice…")
     private var statusState by mutableStateOf("Ready")
@@ -56,7 +67,11 @@ class MainActivity : ComponentActivity() {
 
         textToSpeech = TextToSpeech(this) {
             if (it == TextToSpeech.SUCCESS) {
-                textToSpeech?.language = Locale.getDefault()
+                val result = textToSpeech?.setLanguage(Locale.getDefault())
+                ttsReady = result != TextToSpeech.LANG_MISSING_DATA &&
+                    result != TextToSpeech.LANG_NOT_SUPPORTED
+            } else {
+                ttsReady = false
             }
         }
 
@@ -197,6 +212,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun speak(text: String) {
+        if (!ttsReady) return
         textToSpeech?.speak(
             text,
             TextToSpeech.QUEUE_FLUSH,
@@ -297,16 +313,90 @@ fun LovelyHome(
 
         Spacer(modifier = Modifier.height(35.dp))
 
+        val avatarTransition = rememberInfiniteTransition(label = "avatar")
+        val blinkProgress by avatarTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = androidx.compose.animation.core.keyframes {
+                    durationMillis = 3600
+                    0f at 0
+                    0f at 3000
+                    1f at 3150
+                    1f at 3250
+                    0f at 3400
+                    0f at 3600
+                }
+            ),
+            label = "blinkProgress"
+        )
+        val avatarOffset by avatarTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = -7f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(900, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "avatarOffset"
+        )
+
+        val handMotion by avatarTransition.animateFloat(
+            initialValue = -1.5f,
+            targetValue = 1.5f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(650, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "handMotion"
+        )
+
         Box(
             modifier = Modifier
                 .size(190.dp)
-                .clip(CircleShape),
+                .clip(CircleShape)
+                .offset(y = if (isListening) avatarOffset.dp else 0.dp),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = "Lovely",
-                fontSize = 30.sp
+            val faceScale by avatarTransition.animateFloat(
+                initialValue = 1f,
+                targetValue = 1.025f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(420, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "faceScale"
             )
+
+            Image(
+                painter = androidx.compose.ui.res.painterResource(id = R.drawable.lovely_avatar),
+                contentDescription = "Lovely",
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = if (isListening) faceScale else 1f
+                        scaleY = if (isListening) faceScale else 1f
+                        rotationZ = if (isListening) handMotion else 0f
+                    }
+            )
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val eyeY = size.height * 0.43f
+                val leftX = size.width * 0.36f
+                val rightX = size.width * 0.64f
+                val eyeWidth = size.width * 0.10f
+                val blinkAlpha = blinkProgress
+                drawLine(
+                    color = androidx.compose.ui.graphics.Color.Black.copy(alpha = blinkAlpha),
+                    start = androidx.compose.ui.geometry.Offset(leftX - eyeWidth, eyeY),
+                    end = androidx.compose.ui.geometry.Offset(leftX + eyeWidth, eyeY),
+                    strokeWidth = size.width * 0.018f
+                )
+                drawLine(
+                    color = androidx.compose.ui.graphics.Color.Black.copy(alpha = blinkAlpha),
+                    start = androidx.compose.ui.geometry.Offset(rightX - eyeWidth, eyeY),
+                    end = androidx.compose.ui.geometry.Offset(rightX + eyeWidth, eyeY),
+                    strokeWidth = size.width * 0.018f
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(30.dp))
@@ -410,7 +500,9 @@ fun LovelyHome(
 
 @Composable
 fun LovelySettings(onBack: () -> Unit) {
-    var apiKey by remember { mutableStateOf("") }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val prefs = remember { context.getSharedPreferences("lovely_settings", Context.MODE_PRIVATE) }
+    var apiKey by remember { mutableStateOf(prefs.getString("api_key", "") ?: "") }
     var saved by remember { mutableStateOf(false) }
 
     Column(
@@ -460,6 +552,7 @@ fun LovelySettings(onBack: () -> Unit) {
 
         Button(
             onClick = {
+                prefs.edit().putString("api_key", apiKey).apply()
                 saved = true
             },
             modifier = Modifier.fillMaxWidth()
@@ -470,7 +563,7 @@ fun LovelySettings(onBack: () -> Unit) {
         if (saved) {
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "API key saved for this session.",
+                text = "API key saved.",
                 style = MaterialTheme.typography.bodyMedium
             )
         }
